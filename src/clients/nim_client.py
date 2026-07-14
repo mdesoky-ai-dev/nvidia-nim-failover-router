@@ -96,7 +96,7 @@ async def stream_nim(
                 except json.JSONDecodeError:
                     continue
                 choices = chunk.get("choices")
-            if choices:
-                content = choices[0].get("delta", {}).get("content")
+                if choices:
+                    content = choices[0].get("delta", {}).get("content")
                 if content:
                     yield content
