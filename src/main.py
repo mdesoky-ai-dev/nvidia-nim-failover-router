@@ -9,6 +9,8 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -80,3 +82,11 @@ async def process_financials(payload: FinancialPayload) -> StreamingResponse:
             "X-Accel-Buffering": "no",  # don't let a proxy buffer the stream
         },
     )
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.get("/")
+async def index() -> FileResponse:
+    """Serve the demo UI."""
+    return FileResponse("static/index.html")

@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Desoky Capital — Hybrid Edge Inference Router</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #14181d;
+    --line: #232a32;
+    --text: #e6eaef;
+    --muted: #8b96a3;
+    --local: #3fb950;
+    --cloud: #d29922;
+    --accent: #3b82f6;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 24px;
+    background: var(--bg); color: var(--text);
+    font: 15px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 18px; margin-bottom: 16px;
+  }
+
+  textarea {
+    width: 100%; min-height: 84px; resize: vertical;
+    background: #0e1216; color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px; font: 14px/1.5 inherit;
+  }
+  textarea:focus { outline: none; border-color: var(--accent); }
+
+  .row { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+
+  button {
+    background: var(--accent); color: #fff; border: 0;
+    padding: 9px 16px; border-radius: 7px;
+    font: 600 14px/1 inherit; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  button.ghost {
+    background: transparent; color: var(--muted);
+    border: 1px solid var(--line); font-weight: 500;
+  }
+  button.ghost:hover { color: var(--text); border-color: var(--muted); filter: none; }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 7px;
+    font: 600 12px/1 var(--mono); letter-spacing: 0.04em;
+    padding: 7px 11px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted);
+  }
+  .badge .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--muted);
+  }
+  .badge.local { color: var(--local); border-color: color-mix(in srgb, var(--local) 40%, transparent); }
+  .badge.local .dot { background: var(--local); }
+  .badge.cloud { color: var(--cloud); border-color: color-mix(in srgb, var(--cloud) 40%, transparent); }
+  .badge.cloud .dot { background: var(--cloud); }
+
+  #out {
+    min-height: 96px; white-space: pre-wrap;
+    font: 14px/1.7 inherit; color: var(--text);
+  }
+  #out.empty { color: var(--muted); font-style: italic; }
+  .caret::after {
+    content: "▍"; color: var(--accent);
+    animation: blink 1s step-end infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .metrics { display: flex; gap: 28px; flex-wrap: wrap; margin-top: 16px;
+             padding-top: 14px; border-top: 1px solid var(--line); }
+  .metrics.hide { display: none; }
+  .metric .k { font-size: 11px; color: var(--muted); text-transform: uppercase;
+               letter-spacing: 0.06em; }
+  .metric .v { font: 600 19px/1.3 var(--mono); margin-top: 3px; }
+  .metric .v.fast { color: var(--local); }
+  .metric .v.slow { color: var(--cloud); }
+
+  .demo-note { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .err { color: #f85149; font: 13px/1.5 var(--mono); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Hybrid Edge Inference Router</h1>
+  <div class="sub">Local NVIDIA NIM node with automatic AWS Bedrock failover · Desoky Capital LLC</div>
+
+  <div class="panel">
+    <textarea id="text">Q3 revenue rose 12% to $4.2M while operating costs grew 8%. Summarize the margin story in two sentences.</textarea>
+    <div class="row">
+      <button id="run">Analyze</button>
+      <span id="badge" class="badge"><span class="dot"></span><span id="badgeText">IDLE</span></span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div id="out" class="empty">Response will stream here…</div>
+    <div id="metrics" class="metrics hide">
+      <div class="metric"><div class="k">Time to first token</div><div class="v" id="mTtft">—</div></div>
+      <div class="metric"><div class="k">Total</div><div class="v" id="mTotal">—</div></div>
+      <div class="metric"><div class="k">Tokens</div><div class="v" id="mTokens">—</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="demo-note">
+      Demo controls — these toggle the <strong>simulated</strong> edge node's readiness probe
+      (stub on :8000), letting you watch the router fail over and recover mid-session.
+    </div>
+    <div class="row">
+      <button class="ghost" id="kill">Take edge node offline</button>
+      <button class="ghost" id="revive">Bring edge node online</button>
+      <span id="nodeState" class="badge"><span class="dot"></span><span>unknown</span></span>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const STUB = "http://localhost:8000";
+
+function setBadge(route) {
+  const b = $("badge");
+  b.className = "badge" + (route === "LOCAL_NIM" ? " local"
+                        : route === "AWS_BEDROCK" ? " cloud" : "");
+  $("badgeText").textContent = route || "IDLE";
+}
+
+async function refreshNodeState() {
+  const el = $("nodeState");
+  try {
+    const r = await fetch("/healthz");
+    const j = await r.json();
+    const ready = j.local_nim_ready;
+    el.className = "badge " + (ready ? "local" : "cloud");
+    el.lastElementChild.textContent = ready ? "edge node ready" : "edge node down";
+  } catch {
+    el.className = "badge";
+    el.lastElementChild.textContent = "unknown";
+  }
+}
+
+async function toggleNode(path) {
+  try {
+    await fetch(STUB + path, { method: "POST" });
+  } catch {
+    alert("Could not reach the stub on :8000 — is it running?");
+  }
+  refreshNodeState();
+}
+
+async function run() {
+  const btn = $("run"), out = $("out");
+  btn.disabled = true;
+  out.className = "caret";
+  out.textContent = "";
+  $("metrics").classList.add("hide");
+  setBadge(null);
+
+  try {
+    const resp = await fetch("/api/v1/process-financials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: $("text").value })
+    });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split("\n");
+      buffer = lines.pop();                       // keep any partial line
+
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (data === "[DONE]") continue;
+
+        const frame = JSON.parse(data);
+
+        if (frame.type === "token") {
+          setBadge(frame.source);                 // first token reveals the lane
+          out.textContent += frame.content;
+        } else if (frame.type === "done") {
+          setBadge(frame.source);
+          const fast = frame.source === "LOCAL_NIM";
+          $("mTtft").textContent = frame.ttft_ms + " ms";
+          $("mTtft").className = "v " + (fast ? "fast" : "slow");
+          $("mTotal").textContent = frame.total_ms + " ms";
+          $("mTokens").textContent = frame.tokens;
+          $("metrics").classList.remove("hide");
+        } else if (frame.type === "error") {
+          out.className = "err";
+          out.textContent = "[" + frame.source + "] " + frame.message;
+        }
+      }
+    }
+  } catch (e) {
+    out.className = "err";
+    out.textContent = String(e);
+  } finally {
+    out.classList.remove("caret");
+    btn.disabled = false;
+    refreshNodeState();
+  }
+}
+
+$("run").addEventListener("click", run);
+$("kill").addEventListener("click", () => toggleNode("/admin/offline"));
+$("revive").addEventListener("click", () => toggleNode("/admin/online"));
+refreshNodeState();
+</script>
+</body>
+</html>
